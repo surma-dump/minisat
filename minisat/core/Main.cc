@@ -63,14 +63,14 @@ int main(int argc, char** argv)
         IntOption    verb   ("MAIN", "verb",   "Verbosity level (0=silent, 1=some, 2=more).", 1, IntRange(0, 2));
         IntOption    cpu_lim("MAIN", "cpu-lim","Limit on CPU time allowed in seconds.\n", 0, IntRange(0, INT32_MAX));
         IntOption    mem_lim("MAIN", "mem-lim","Limit on memory usage in megabytes.\n", 0, IntRange(0, INT32_MAX));
-        
+
         parseOptions(argc, argv, true);
 
         Solver S;
         double initial_time = cpuTime();
 
         S.verbosity = verb;
-        
+
         solver = &S;
         // Use signal handlers that forcibly quit until the solver will be able to respond to
         // interrupts:
@@ -79,35 +79,35 @@ int main(int argc, char** argv)
         // Try to set resource limits:
         if (cpu_lim != 0) limitTime(cpu_lim);
         if (mem_lim != 0) limitMemory(mem_lim);
-        
+
         if (argc == 1)
             printf("Reading from standard input... Use '--help' for help.\n");
-        
+
         gzFile in = (argc == 1) ? gzdopen(0, "rb") : gzopen(argv[1], "rb");
         if (in == NULL)
             printf("ERROR! Could not open file: %s\n", argc == 1 ? "<stdin>" : argv[1]), exit(1);
-        
+
         if (S.verbosity > 0){
             printf("============================[ Problem Statistics ]=============================\n");
             printf("|                                                                             |\n"); }
-        
+
         parse_DIMACS(in, S);
         gzclose(in);
         FILE* res = (argc >= 3) ? fopen(argv[2], "wb") : NULL;
-        
+
         if (S.verbosity > 0){
             printf("|  Number of variables:  %12d                                         |\n", S.nVars());
             printf("|  Number of clauses:    %12d                                         |\n", S.nClauses()); }
-        
+
         double parsed_time = cpuTime();
         if (S.verbosity > 0){
             printf("|  Parse time:           %12.2f s                                       |\n", parsed_time - initial_time);
             printf("|                                                                             |\n"); }
- 
+
         // Change to signal-handlers that will only notify the solver and allow it to terminate
         // voluntarily:
         sigTerm(SIGINT_interrupt);
-       
+
         if (!S.simplify()){
             if (res != NULL) fprintf(res, "UNSAT\n"), fclose(res);
             if (S.verbosity > 0){
@@ -118,27 +118,30 @@ int main(int argc, char** argv)
             printf("UNSATISFIABLE\n");
             exit(20);
         }
-        
-        vec<Lit> dummy;
-        lbool ret = S.solveLimited(dummy);
-        if (S.verbosity > 0){
-            S.printStats();
-            printf("\n"); }
-        printf(ret == l_True ? "SATISFIABLE\n" : ret == l_False ? "UNSATISFIABLE\n" : "INDETERMINATE\n");
-        if (res != NULL){
-            if (ret == l_True){
-                fprintf(res, "SAT\n");
-                for (int i = 0; i < S.nVars(); i++)
-                    if (S.model[i] != l_Undef)
-                        fprintf(res, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
-                fprintf(res, " 0\n");
-            }else if (ret == l_False)
-                fprintf(res, "UNSAT\n");
-            else
-                fprintf(res, "INDET\n");
-            fclose(res);
-        }
-        
+
+        lbool ret;
+        do {
+            vec<Lit> dummy;
+            ret = S.solve()?l_True:l_False;
+            if (S.verbosity > 0){
+                S.printStats();
+                printf("\n"); }
+            printf(ret == l_True ? "SATISFIABLE\n" : ret == l_False ? "UNSATISFIABLE\n" : "INDETERMINATE\n");
+            if (res != NULL){
+                if (ret == l_True){
+                    for (int i = 0; i < S.nVars(); i++) {
+                        if (S.model[i] != l_Undef) {
+                            fprintf(res, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
+                            dummy.push(mkLit(i, S.model[i] == l_True));
+                        }
+                    }
+                    fprintf(res, " 0\n");
+                    S.addClause(dummy);
+                }
+            }
+        } while(ret == l_True);
+        fclose(res);
+
 #ifdef NDEBUG
         exit(ret == l_True ? 10 : ret == l_False ? 20 : 0);     // (faster than "return", which will invoke the destructor for 'Solver')
 #else
