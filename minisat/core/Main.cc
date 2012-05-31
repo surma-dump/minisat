@@ -65,7 +65,7 @@ void copySolver (Solver& a, Solver& b) {
 
 void printSolution(FILE* out, Solver& S) {
     for (int i = 0; i < S.nVars(); i++) {
-        fprintf(out, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
+        fprintf(out, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?" ":"-", i+1);
     }
     fprintf(out, " 0 \n");
 }
@@ -124,9 +124,9 @@ int main(int argc, char** argv)
                 for (int i = 0; i < S.nVars(); i++) {
                     if(S.model[i] == l_True) {
                         solution.push(mkLit(i, S.model[i] == l_True));
-                        negsolution.push(mkLit(i, S.model[i] != l_True));
+                        negsolution.push(mkLit(i, S.model[i] == l_True));
                     } else {
-                        S2.addClause(mkLit(i, S.model[i] != l_True));
+                        S2.addClause(mkLit(i, S.model[i] == l_True));
                     }
                 }
                 S2.addClause(negsolution);
