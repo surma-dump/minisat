@@ -26,6 +26,7 @@ OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWA
 #include "minisat/utils/Options.h"
 #include "minisat/core/Dimacs.h"
 #include "minisat/core/Solver.h"
+#include "minisat/core/SolverTypes.h"
 
 using namespace Minisat;
 
@@ -48,108 +49,101 @@ static void SIGINT_exit(int) {
     _exit(1); }
 
 
-//=================================================================================================
-// Main:
 
+void copySolver (Solver& a, Solver& b) {
+    for(int i = 0; i < a.nVars(); i++) {
+        b.newVar();
+    }
+    for(ClauseIterator it = a.clausesBegin(); it != a.clausesEnd(); it.operator++()) {
+        vec<Lit> clause;
+        for(int i = 0; i < (*it).size(); i++) {
+            clause.push((*it)[i]);
+        }
+        b.addClause(clause);
+    }
+}
+
+void printSolution(FILE* out, Solver& S) {
+    for (int i = 0; i < S.nVars(); i++) {
+        fprintf(out, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
+    }
+    fprintf(out, " 0 \n");
+}
 
 int main(int argc, char** argv)
 {
-    try {
-        setUsageHelp("USAGE: %s [options] <input-file> <result-output-file>\n\n  where input may be either in plain or gzipped DIMACS.\n");
-        setX86FPUPrecision();
+    setUsageHelp("USAGE: %s [options] <input-file> <result-output-file>\n\n  where input may be either in plain or gzipped DIMACS.\n");
+    setX86FPUPrecision();
 
-        // Extra options:
-        //
-        IntOption    verb   ("MAIN", "verb",   "Verbosity level (0=silent, 1=some, 2=more).", 1, IntRange(0, 2));
-        IntOption    cpu_lim("MAIN", "cpu-lim","Limit on CPU time allowed in seconds.\n", 0, IntRange(0, INT32_MAX));
-        IntOption    mem_lim("MAIN", "mem-lim","Limit on memory usage in megabytes.\n", 0, IntRange(0, INT32_MAX));
+    // Extra options:
+    //
+    BoolOption   mini("MAIN", "minimal", "Find a minimal model", false);
 
-        parseOptions(argc, argv, true);
+    parseOptions(argc, argv, true);
 
-        Solver S;
-        double initial_time = cpuTime();
+    Solver S;
 
-        S.verbosity = verb;
+    solver = &S;
+    // Use signal handlers that forcibly quit until the solver will be able to respond to
+    // interrupts:
+    sigTerm(SIGINT_exit);
 
-        solver = &S;
-        // Use signal handlers that forcibly quit until the solver will be able to respond to
-        // interrupts:
-        sigTerm(SIGINT_exit);
 
-        // Try to set resource limits:
-        if (cpu_lim != 0) limitTime(cpu_lim);
-        if (mem_lim != 0) limitMemory(mem_lim);
-
-        if (argc == 1)
-            printf("Reading from standard input... Use '--help' for help.\n");
-
-        gzFile in = (argc == 1) ? gzdopen(0, "rb") : gzopen(argv[1], "rb");
-        if (in == NULL)
-            printf("ERROR! Could not open file: %s\n", argc == 1 ? "<stdin>" : argv[1]), exit(1);
-
-        if (S.verbosity > 0){
-            printf("============================[ Problem Statistics ]=============================\n");
-            printf("|                                                                             |\n"); }
-
-        parse_DIMACS(in, S);
-        gzclose(in);
-        FILE* res = (argc >= 3) ? fopen(argv[2], "wb") : NULL;
-
-        if (S.verbosity > 0){
-            printf("|  Number of variables:  %12d                                         |\n", S.nVars());
-            printf("|  Number of clauses:    %12d                                         |\n", S.nClauses()); }
-
-        double parsed_time = cpuTime();
-        if (S.verbosity > 0){
-            printf("|  Parse time:           %12.2f s                                       |\n", parsed_time - initial_time);
-            printf("|                                                                             |\n"); }
-
-        // Change to signal-handlers that will only notify the solver and allow it to terminate
-        // voluntarily:
-        sigTerm(SIGINT_interrupt);
-
-        if (!S.simplify()){
-            if (res != NULL) fprintf(res, "UNSAT\n"), fclose(res);
-            if (S.verbosity > 0){
-                printf("===============================================================================\n");
-                printf("Solved by unit propagation\n");
-                S.printStats();
-                printf("\n"); }
-            printf("UNSATISFIABLE\n");
-            exit(20);
-        }
-
-        lbool ret;
-        do {
-            vec<Lit> dummy;
-            ret = S.solve()?l_True:l_False;
-            if (S.verbosity > 0){
-                S.printStats();
-                printf("\n"); }
-            printf(ret == l_True ? "SATISFIABLE\n" : ret == l_False ? "UNSATISFIABLE\n" : "INDETERMINATE\n");
-            if (res != NULL){
-                if (ret == l_True){
-                    for (int i = 0; i < S.nVars(); i++) {
-                        if (S.model[i] != l_Undef) {
-                            fprintf(res, "%s%s%d", (i==0)?"":" ", (S.model[i]==l_True)?"":"-", i+1);
-                            dummy.push(mkLit(i, S.model[i] == l_True));
-                        }
-                    }
-                    fprintf(res, " 0\n");
-                    S.addClause(dummy);
-                }
-            }
-        } while(ret == l_True);
-        fclose(res);
-
-#ifdef NDEBUG
-        exit(ret == l_True ? 10 : ret == l_False ? 20 : 0);     // (faster than "return", which will invoke the destructor for 'Solver')
-#else
-        return (ret == l_True ? 10 : ret == l_False ? 20 : 0);
-#endif
-    } catch (OutOfMemoryException&){
-        printf("===============================================================================\n");
-        printf("INDETERMINATE\n");
-        exit(0);
+    if (argc != 3) {
+        printUsageAndExit(argc, argv, true);
     }
+
+    gzFile in = (argc == 1) ? gzdopen(0, "rb") : gzopen(argv[1], "rb");
+    if (in == NULL)
+        printf("ERROR! Could not open file: %s\n", argv[1]), exit(1);
+
+    parse_DIMACS(in, S);
+    gzclose(in);
+
+    FILE* res = fopen(argv[2], "wb");
+    if (res == NULL) {
+        printf("ERROR! Could not open file: %s\n", argv[2]), exit(2);
+    }
+
+    printf("Number of variables:  %12d\n", S.nVars());
+    printf("Number of clauses:    %12d\n", S.nClauses());
+
+    // Change to signal-handlers that will only notify the solver and allow it to terminate
+    // voluntarily:
+    sigTerm(SIGINT_interrupt);
+
+    lbool ret;
+    do {
+        vec<Lit> solution, negsolution;
+        ret = S.solve()?l_True:l_False;
+        if (ret == l_True){
+            if(mini) {
+                Solver S2;
+                copySolver(S, S2);
+
+                for (int i = 0; i < S.nVars(); i++) {
+                    if(S.model[i] == l_True) {
+                        solution.push(mkLit(i, S.model[i] == l_True));
+                        negsolution.push(mkLit(i, S.model[i] != l_True));
+                    } else {
+                        S2.addClause(mkLit(i, S.model[i] != l_True));
+                    }
+                }
+                S2.addClause(negsolution);
+                if (!S2.solve()) {
+                    printSolution(res, S);
+                }
+                S.addClause(solution);
+            } else {
+                for (int i = 0; i < S.nVars(); i++) {
+                    solution.push(mkLit(i, S.model[i] == l_True));
+                }
+                printSolution(res, S);
+                S.addClause(solution);
+            }
+        }
+    } while(ret == l_True);
+    fclose(res);
+
+    return 0;
 }
